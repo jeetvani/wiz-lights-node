@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wiz Lights</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #111;
+        color: #eee;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .card {
+        width: min(420px, 100%);
+        background: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 16px;
+        padding: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.4rem;
+      }
+
+      p {
+        margin: 0 0 20px;
+        color: #999;
+        font-size: 0.95rem;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      button {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 16px;
+        cursor: pointer;
+        background: #3b82f6;
+        color: white;
+      }
+
+      button.secondary {
+        background: #333;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        color: #bbb;
+        font-size: 0.9rem;
+      }
+
+      select,
+      input[type="text"],
+      input[type="range"] {
+        width: 100%;
+      }
+
+      select,
+      input[type="text"] {
+        background: #111;
+        color: #eee;
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+
+      .hex-row {
+        display: grid;
+        grid-template-columns: 56px 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .swatch {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        border: 2px solid #444;
+        background: #ff0044;
+      }
+
+      input[type="color"] {
+        width: 0;
+        height: 0;
+        opacity: 0;
+        position: absolute;
+      }
+
+      .status {
+        min-height: 1.2em;
+        margin-top: 12px;
+        font-size: 0.9rem;
+        color: #aaa;
+      }
+
+      .status.error {
+        color: #f87171;
+      }
+
+      .status.ok {
+        color: #4ade80;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Wiz Lights</h1>
+      <p>Discover bulbs on your LAN (UDP 38899) and set color by hex.</p>
+
+      <div class="row">
+        <button id="discoverBtn">Scan network</button>
+      </div>
+
+      <label for="lightSelect">Light</label>
+      <select id="lightSelect" disabled>
+        <option value="">Scan to find lights…</option>
+      </select>
+
+      <div style="height: 16px"></div>
+
+      <label>Color</label>
+      <div class="hex-row">
+        <label for="colorPicker" class="swatch" id="swatch" title="Pick color"></label>
+        <input id="colorPicker" type="color" value="#ff0044" />
+        <input id="hexInput" type="text" value="#ff0044" spellcheck="false" />
+        <button id="applyBtn" disabled>Apply</button>
+      </div>
+
+      <label for="brightness" style="margin-top: 16px">Brightness</label>
+      <input id="brightness" type="range" min="10" max="100" value="100" />
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <script>
+      const discoverBtn = document.getElementById("discoverBtn");
+      const lightSelect = document.getElementById("lightSelect");
+      const colorPicker = document.getElementById("colorPicker");
+      const hexInput = document.getElementById("hexInput");
+      const swatch = document.getElementById("swatch");
+      const applyBtn = document.getElementById("applyBtn");
+      const brightness = document.getElementById("brightness");
+      const status = document.getElementById("status");
+
+      function setStatus(message, type = "") {
+        status.textContent = message;
+        status.className = `status ${type}`.trim();
+      }
+
+      function normalizeHex(value) {
+        let hex = value.trim();
+        if (!hex.startsWith("#")) hex = `#${hex}`;
+        if (/^#[0-9a-fA-F]{6}$/.test(hex)) return hex.toLowerCase();
+        return null;
+      }
+
+      function updateSwatch(hex) {
+        swatch.style.background = hex;
+      }
+
+      function syncFromHex(hex) {
+        colorPicker.value = hex;
+        hexInput.value = hex;
+        updateSwatch(hex);
+      }
+
+      colorPicker.addEventListener("input", () => {
+        syncFromHex(colorPicker.value.toLowerCase());
+      });
+
+      hexInput.addEventListener("input", () => {
+        const hex = normalizeHex(hexInput.value);
+        if (hex) syncFromHex(hex);
+      });
+
+      discoverBtn.addEventListener("click", async () => {
+        discoverBtn.disabled = true;
+        setStatus("Scanning…");
+
+        try {
+          const res = await fetch("/api/discover");
+          const data = await res.json();
+
+          if (!data.success) throw new Error(data.error || "Discovery failed");
+
+          lightSelect.innerHTML = "";
+
+          if (data.lights.length === 0) {
+            lightSelect.disabled = true;
+            applyBtn.disabled = true;
+            lightSelect.innerHTML =
+              '<option value="">No lights found — same WiFi?</option>';
+            setStatus("No lights found.", "error");
+            return;
+          }
+
+          for (const light of data.lights) {
+            const opt = document.createElement("option");
+            opt.value = light.ip;
+            opt.textContent = `${light.ip} (${light.state ? "on" : "off"})`;
+            lightSelect.appendChild(opt);
+          }
+
+          lightSelect.disabled = false;
+          applyBtn.disabled = false;
+          setStatus(`Found ${data.lights.length} light(s).`, "ok");
+        } catch (err) {
+          setStatus(err.message, "error");
+        } finally {
+          discoverBtn.disabled = false;
+        }
+      });
+
+      applyBtn.addEventListener("click", async () => {
+        const ip = lightSelect.value;
+        const hex = normalizeHex(hexInput.value);
+
+        if (!ip || !hex) {
+          setStatus("Pick a light and valid hex color.", "error");
+          return;
+        }
+
+        applyBtn.disabled = true;
+        setStatus("Sending color…");
+
+        try {
+          const res = await fetch("/api/color", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ip,
+              hex,
+              brightness: Number(brightness.value),
+            }),
+          });
+
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || "Failed to set color");
+
+          setStatus(`Set ${ip} to ${hex}`, "ok");
+        } catch (err) {
+          setStatus(err.message, "error");
+        } finally {
+          applyBtn.disabled = false;
+        }
+      });
+
+      syncFromHex("#ff0044");
+    </script>
+  </body>
+</html>
